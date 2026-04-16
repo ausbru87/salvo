@@ -53,7 +53,8 @@ final class AccountManager {
     /// Persist a Coder session token in the Keychain and mark the
     /// account as authenticated.
     func saveCoderToken(_ token: String) throws {
-        guard let data = token.data(using: .utf8) else { return }
+        guard !token.isEmpty, let data = token.data(using: .utf8)
+        else { return }
         try save(key: Self.coderTokenKey, data: data)
         coderAuthenticated = true
     }
@@ -66,7 +67,7 @@ final class AccountManager {
             return nil
         }
         let token = String(data: data, encoding: .utf8)
-        coderAuthenticated = token != nil
+        coderAuthenticated = token?.isEmpty == false
         return token
     }
 
@@ -100,7 +101,8 @@ final class AccountManager {
         access: String,
         refresh: String
     ) throws {
-        guard let accessData = access.data(using: .utf8),
+        guard !access.isEmpty, !refresh.isEmpty,
+            let accessData = access.data(using: .utf8),
             let refreshData = refresh.data(using: .utf8)
         else {
             return
@@ -118,12 +120,9 @@ final class AccountManager {
         guard
             let accessData = try load(key: Self.gmailAccessKey),
             let refreshData = try load(key: Self.gmailRefreshKey),
-            let access = String(
-                data: accessData, encoding: .utf8
-            ),
-            let refresh = String(
-                data: refreshData, encoding: .utf8
-            )
+            let access = String(data: accessData, encoding: .utf8),
+            let refresh = String(data: refreshData, encoding: .utf8),
+            !access.isEmpty, !refresh.isEmpty
         else {
             gmailAuthenticated = false
             return nil

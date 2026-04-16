@@ -56,8 +56,8 @@ import Testing
         #expect(part.text == "hello")
     }
 
-    @Test func oAuthCodeVerifierLength() {
-        let verifier = CoderOAuth.generateCodeVerifier()
+    @Test func oAuthCodeVerifierLength() throws {
+        let verifier = try CoderOAuth.generateCodeVerifier()
         #expect(verifier.count == 128)
     }
 

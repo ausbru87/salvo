@@ -14,9 +14,18 @@ public enum CoderOAuth {
 
     /// Generates a cryptographically random code verifier (128
     /// characters, URL-safe base64 alphabet).
-    public static func generateCodeVerifier() -> String {
+    ///
+    /// - Throws: ``CoderOAuthError/randomGenerationFailed(_:)`` if
+    ///   the system RNG returns a non-success status. Callers must
+    ///   not proceed with a zero-filled verifier.
+    public static func generateCodeVerifier() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 96)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let status = SecRandomCopyBytes(
+            kSecRandomDefault, bytes.count, &bytes
+        )
+        guard status == errSecSuccess else {
+            throw CoderOAuthError.randomGenerationFailed(status)
+        }
         return Data(bytes)
             .base64URLEncoded()
             .prefix(128)
@@ -173,6 +182,22 @@ public struct OAuthTokenResponse: Decodable, Sendable {
         case tokenType = "token_type"
         case expiresIn = "expires_in"
         case refreshToken = "refresh_token"
+    }
+}
+
+// MARK: - Errors
+
+/// Errors thrown by ``CoderOAuth`` helpers.
+public enum CoderOAuthError: Error, LocalizedError, Sendable {
+    /// The system RNG returned a non-success status code. Using
+    /// a zero-filled verifier would compromise PKCE security.
+    case randomGenerationFailed(OSStatus)
+
+    public var errorDescription: String? {
+        switch self {
+        case .randomGenerationFailed(let status):
+            return "Failed to generate cryptographic random bytes (OSStatus \(status))."
+        }
     }
 }
 
