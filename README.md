@@ -1,4 +1,4 @@
-# CoderMail
+# Salvo
 
 A native macOS Gmail client that uses the [Coder Chats API](https://coder.com/docs) for AI-powered email drafting. Your data stays on your infrastructure, and you pick the model.
 
@@ -8,13 +8,13 @@ A native macOS Gmail client that uses the [Coder Chats API](https://coder.com/do
 - **Third-party clients** (Superhuman, Spark) send your email to their servers and use proprietary agents.
 - **Copy-paste to Claude/ChatGPT** loses the visual context of the email thread.
 
-CoderMail keeps email CRUD on Gmail's API and routes all AI through your Coder deployment — Claude, GPT, or whatever model your admin configured.
+Salvo keeps email CRUD on Gmail's API and routes all AI through your Coder deployment — Claude, GPT, or whatever model your admin configured.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────┐
-│     CoderMail (macOS native)     │
+│     Salvo (macOS native)         │
 │  ┌────────────┐ ┌──────────────┐ │
 │  │  Email View │ │ AI Compose   │ │
 │  │  (Gmail)    │ │ (Coder Chat) │ │
@@ -36,8 +36,8 @@ CoderMail keeps email CRUD on Gmail's API and routes all AI through your Coder d
 
 ```
 Sources/
-├── CoderMailApp/           # macOS app (SwiftUI)
-│   ├── CoderMailApp.swift  # @main entry point
+├── SalvoApp/              # macOS app (SwiftUI)
+│   ├── SalvoApp.swift     # @main entry point
 │   ├── Views/
 │   │   ├── ContentView.swift     # Three-column NavigationSplitView
 │   │   ├── ComposeView.swift     # Email compose with AI assist toggle
@@ -79,7 +79,7 @@ Sources/
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project, enable the Gmail API
 3. Create OAuth 2.0 credentials (macOS app type)
-4. Set redirect URI to `codermail://oauth/google/callback`
+4. Set redirect URI to `salvo://oauth/google/callback`
 5. Note the Client ID
 
 ### 2. Coder OAuth Application (recommended)
@@ -87,7 +87,7 @@ Sources/
 If your Coder instance has the `oauth2` experiment enabled:
 
 1. Go to Coder → Deployment Settings → OAuth2 Applications
-2. Create an application with callback URL `codermail://oauth/coder/callback`
+2. Create an application with callback URL `salvo://oauth/coder/callback`
 3. Note the Client ID
 
 Or use a session token (Settings → API Tokens in the app).
@@ -97,7 +97,7 @@ Or use a session token (Settings → API Tokens in the app).
 ```bash
 # Clone
 git clone <this-repo>
-cd codermail
+cd salvo
 
 # Open in Xcode
 open Package.swift

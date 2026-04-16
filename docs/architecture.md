@@ -249,11 +249,11 @@ requires `--experiments oauth2`). This gives us a proper native auth flow:
 ```
 App opens ASWebAuthenticationSession to:
   https://coder.example.com/oauth2/authorize?
-    client_id=codermail-macos&
+    client_id=salvo-macos&
     response_type=code&
     code_challenge=$CODE_CHALLENGE&
     code_challenge_method=S256&
-    redirect_uri=codermail://callback
+    redirect_uri=salvo://callback
 
 User authenticates in browser → redirected back to app with auth code.
 App exchanges code for access token (with PKCE code_verifier).

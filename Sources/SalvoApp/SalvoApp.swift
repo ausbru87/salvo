@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CoderMailApp: App {
+struct SalvoApp: App {
     @StateObject private var appState = AppState()
 
     var body: some Scene {

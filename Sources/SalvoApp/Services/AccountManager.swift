@@ -41,7 +41,7 @@ final class AccountManager {
 
     // MARK: - Constants
 
-    private static let serviceName = "com.codermail.credentials"
+    private static let serviceName = "com.salvo.credentials"
     private static let coderTokenKey = "coder_session_token"
     private static let coderURLKey = "coder_base_url"
     private static let gmailAccessKey = "gmail_access_token"

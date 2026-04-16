@@ -3,18 +3,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "CoderMail",
+    name: "Salvo",
     platforms: [
         .macOS(.v14),
     ],
     products: [
-        .executable(name: "CoderMailApp", targets: ["CoderMailApp"]),
+        .executable(name: "SalvoApp", targets: ["SalvoApp"]),
         .library(name: "CoderAPI", targets: ["CoderAPI"]),
         .library(name: "GmailAPI", targets: ["GmailAPI"]),
     ],
     targets: [
         .executableTarget(
-            name: "CoderMailApp",
+            name: "SalvoApp",
             dependencies: ["CoderAPI", "GmailAPI"]
         ),
         .target(name: "CoderAPI"),
