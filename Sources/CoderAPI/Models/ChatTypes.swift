@@ -118,6 +118,19 @@ public enum ChatStatus: String, Codable, Sendable {
     case complete
 }
 
+// MARK: - Chat Input Part
+
+/// A typed chunk of content sent *to* a chat (as opposed to
+/// ``ChatMessagePart`` which is received from the stream).
+public struct ChatInputPart: Sendable {
+    public let type: ChatMessagePartType
+    public let text: String
+
+    public static func text(_ text: String) -> ChatInputPart {
+        ChatInputPart(type: .text, text: text)
+    }
+}
+
 // MARK: - Tool Results
 
 /// The result of executing a dynamic tool locally, sent back to the

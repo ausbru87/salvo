@@ -7,7 +7,7 @@ struct ComposeView: View {
     @State private var to = ""
     @State private var cc = ""
     @State private var subject = ""
-    @State private var body = ""
+    @State private var emailBody = ""
     @State private var showCC = false
     @State private var isAIAssistVisible = false
     @State private var aiInstruction = ""
@@ -60,7 +60,7 @@ struct ComposeView: View {
             Divider()
 
             // Body editor.
-            TextEditor(text: $body)
+            TextEditor(text: $emailBody)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .padding(8)

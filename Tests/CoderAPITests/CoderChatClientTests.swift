@@ -1,40 +1,33 @@
-import XCTest
+import Foundation
+import Testing
 @testable import CoderAPI
 
-final class CoderClientTests: XCTestCase {
-    func testClientInitialization() {
-        let client = CoderClient(
+@Suite struct CoderClientTests {
+
+    @Test func clientInitialization() {
+        _ = HTTPCoderClient(
             baseURL: URL(string: "https://coder.example.com")!,
             sessionToken: "test-token"
         )
-        XCTAssertNotNil(client)
     }
 
-    func testClientInitializationWithOAuth() {
-        let client = CoderClient(
+    @Test func clientInitializationWithOAuth() {
+        _ = HTTPCoderClient(
             baseURL: URL(string: "https://coder.example.com")!,
             accessToken: "oauth-token"
         )
-        XCTAssertNotNil(client)
     }
 
-    func testCoderAPIErrorDescriptions() {
-        XCTAssertNotNil(CoderAPIError.unauthorized.errorDescription)
-        XCTAssertNotNil(CoderAPIError.forbidden.errorDescription)
-        XCTAssertNotNil(CoderAPIError.notFound.errorDescription)
-        XCTAssertNotNil(
-            CoderAPIError.conflict(message: "duplicate").errorDescription
-        )
-        XCTAssertNotNil(CoderAPIError.usageLimitExceeded.errorDescription)
-        XCTAssertNotNil(
-            CoderAPIError.serverError(
-                statusCode: 500,
-                message: "internal"
-            ).errorDescription
-        )
+    @Test func coderAPIErrorDescriptions() {
+        #expect(CoderAPIError.unauthorized.errorDescription != nil)
+        #expect(CoderAPIError.forbidden.errorDescription != nil)
+        #expect(CoderAPIError.notFound.errorDescription != nil)
+        #expect(CoderAPIError.conflict(message: "duplicate").errorDescription != nil)
+        #expect(CoderAPIError.usageLimitExceeded.errorDescription != nil)
+        #expect(CoderAPIError.serverError(statusCode: 500, message: "internal").errorDescription != nil)
     }
 
-    func testAnyCodableRoundTrip() throws {
+    @Test func anyCodableRoundTrip() throws {
         let original: AnyCodable = [
             "key": "value",
             "number": 42,
@@ -42,45 +35,42 @@ final class CoderClientTests: XCTestCase {
         ]
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(AnyCodable.self, from: data)
-        XCTAssertEqual(original, decoded)
+        #expect(original == decoded)
     }
 
-    func testChatStatusDecoding() throws {
-        let json = Data(#""requires_action""#.utf8)
+    @Test func chatStatusDecoding() throws {
+        let json = Data(#""action_required""#.utf8)
         let status = try JSONDecoder().decode(ChatStatus.self, from: json)
-        XCTAssertEqual(status, .requiresAction)
+        #expect(status == .actionRequired)
     }
 
-    func testChatMessagePartTypeDecoding() throws {
-        let json = Data(#""tool-call""#.utf8)
-        let partType = try JSONDecoder().decode(
-            ChatMessagePartType.self,
-            from: json
-        )
-        XCTAssertEqual(partType, .toolCall)
+    @Test func chatMessagePartTypeDecoding() throws {
+        let json = Data(#""tool_call""#.utf8)
+        let partType = try JSONDecoder().decode(ChatMessagePartType.self, from: json)
+        #expect(partType == .toolCall)
     }
 
-    func testChatInputPartTextFactory() {
+    @Test func chatInputPartTextFactory() {
         let part = ChatInputPart.text("hello")
-        XCTAssertEqual(part.type, .text)
-        XCTAssertEqual(part.text, "hello")
+        #expect(part.type == .text)
+        #expect(part.text == "hello")
     }
 
-    func testOAuthCodeVerifierLength() {
+    @Test func oAuthCodeVerifierLength() {
         let verifier = CoderOAuth.generateCodeVerifier()
-        XCTAssertEqual(verifier.count, 128)
+        #expect(verifier.count == 128)
     }
 
-    func testOAuthCodeChallengeIsDeterministic() {
+    @Test func oAuthCodeChallengeIsDeterministic() {
         let verifier = "test-verifier-string"
         let c1 = CoderOAuth.generateCodeChallenge(verifier: verifier)
         let c2 = CoderOAuth.generateCodeChallenge(verifier: verifier)
-        XCTAssertEqual(c1, c2)
+        #expect(c1 == c2)
         // S256 challenge must not contain padding characters.
-        XCTAssertFalse(c1.contains("="))
+        #expect(!c1.contains("="))
     }
 
-    func testOAuthAuthorizationURL() {
+    @Test func oAuthAuthorizationURL() {
         let url = CoderOAuth.buildAuthorizationURL(
             baseURL: URL(string: "https://coder.example.com")!,
             clientID: "my-client",
@@ -94,9 +84,9 @@ final class CoderClientTests: XCTestCase {
                 ($0.name, $0.value ?? "")
             }
         )
-        XCTAssertEqual(params["response_type"], "code")
-        XCTAssertEqual(params["client_id"], "my-client")
-        XCTAssertEqual(params["code_challenge_method"], "S256")
-        XCTAssertEqual(params["state"], "random-state")
+        #expect(params["response_type"] == "code")
+        #expect(params["client_id"] == "my-client")
+        #expect(params["code_challenge_method"] == "S256")
+        #expect(params["state"] == "random-state")
     }
 }
