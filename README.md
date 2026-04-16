@@ -13,55 +13,71 @@ Salvo keeps email CRUD on Gmail's API and routes all AI through your Coder deplo
 ## Architecture
 
 ```
-┌──────────────────────────────────┐
-│     Salvo (macOS native)         │
-│  ┌────────────┐ ┌──────────────┐ │
-│  │  Email View │ │ AI Compose   │ │
-│  │  (Gmail)    │ │ (Coder Chat) │ │
-│  └──────┬─────┘ └──────┬───────┘ │
-└─────────┼──────────────┼─────────┘
-          │              │
-     Gmail REST     Coder Chats API
-     API (OAuth2)   (OAuth2 + PKCE)
-                         │
-                    Your Coder Deploy
-                    (Claude / GPT / etc.)
+┌─────────────────────────────────────────────────────────────┐
+│                    Salvo (macOS native)                     │
+│                                                             │
+│  ┌──────────────────────┐   ┌───────────────────────────┐   │
+│  │     Email View       │   │     AI Compose Pane       │   │
+│  │   ContentView.swift  │   │    AIAssistPane.swift     │   │
+│  └──────────┬───────────┘   └──────────────┬────────────┘   │
+│             │         Services              │               │
+│  ┌──────────▼───────────┐   ┌──────────────▼────────────┐   │
+│  │    GmailAPI module   │   │      CoderAPI module      │   │
+│  │  HTTPGmailClient     │   │    HTTPCoderClient        │   │
+│  │  URLSession (REST)   │   │  URLSession (HTTP + WSS)  │   │
+│  │  Bearer + refresh    │   │  Session token or OAuth2  │   │
+│  └──────────┬───────────┘   └──────────────┬────────────┘   │
+└─────────────┼─────────────────────────────┼────────────────┘
+              │                             │
+    HTTPS + OAuth2 Bearer        HTTPS (create, message, tools)
+    401 → auto token refresh     WSS  (stream events)
+              │                             │
+              ▼                             ▼
+   Gmail REST API                Coder Chats API
+   googleapis.com                /api/experimental/chats/*
+                                            │
+                                  Your Coder Deployment
+                                  (Claude / GPT / custom)
 ```
 
-**Dynamic Tools**: The app registers tools (`get_email_thread`, `get_current_draft`, `update_draft`) that the LLM calls. The app fulfills them locally — reading from Gmail or the compose editor — and returns results via `SubmitToolResults`. The model only sees email data you explicitly provide through tool calls.
+**Dynamic Tools** — the privacy boundary: the app registers five tools (`get_email_thread`, `get_current_draft`, `update_draft`, `set_subject`, `search_emails`) with each chat. The LLM calls them when it needs data; the app intercepts the `action_required` WebSocket event, executes the tool locally against Gmail or the compose editor, and returns results via `SubmitToolResults`. The model only ever sees what passes through these controlled calls.
 
-**No workspace needed**: Chats are created without a `workspace_id`, so they run in the Coder control plane. No workspace spin-up latency for email tasks.
+**No workspace needed**: Chats run in the Coder control plane — `workspace_id` is omitted, so there is no workspace spin-up latency for email tasks.
 
 ## Project Structure
 
 ```
 Sources/
-├── SalvoApp/              # macOS app (SwiftUI)
-│   ├── SalvoApp.swift     # @main entry point
+├── SalvoApp/                      # macOS app target (SwiftUI + AppKit)
+│   ├── SalvoApp.swift             # @main entry point
 │   ├── Views/
-│   │   ├── ContentView.swift     # Three-column NavigationSplitView
-│   │   ├── ComposeView.swift     # Email compose with AI assist toggle
-│   │   └── AIAssistPane.swift    # Streaming LLM output + instruction input
+│   │   ├── ContentView.swift      # Three-column NavigationSplitView
+│   │   ├── ComposeView.swift      # Email compose with AI assist toggle
+│   │   └── AIAssistPane.swift     # Streaming LLM output + instruction input
 │   ├── Models/
-│   │   ├── Email.swift           # EmailThread, EmailMessage types
-│   │   └── AppState.swift        # Observable app-wide state
+│   │   ├── Email.swift            # EmailThread, EmailMessage, EmailAddress
+│   │   └── AppState.swift         # @Observable app-wide state
 │   └── Services/
-│       ├── AIEmailService.swift      # Orchestrates Coder Chats for email tasks
-│       ├── AccountManager.swift      # Keychain credential management
-│       └── EmailToolExecutor.swift   # Executes dynamic tool calls locally
-├── CoderAPI/               # Coder Chats API client library
-│   ├── CoderClient.swift   # HTTP + WebSocket client
-│   ├── CoderOAuth.swift    # OAuth2 PKCE flow
-│   ├── CoderAPIError.swift
+│       ├── AIEmailService.swift   # Orchestrates Coder Chats; drives tool loop
+│       ├── AccountManager.swift   # Keychain credential storage
+│       └── EmailToolExecutor.swift # Executes dynamic tool calls locally
+├── CoderAPI/                      # SPM library — Coder Chats client
+│   ├── CoderClient.swift          # Protocol (5 methods)
+│   ├── HTTPCoderClient.swift      # URLSession + URLSessionWebSocketTask impl
+│   ├── CoderStreamMessage.swift   # Wire-format decoder (WS JSON → ChatStreamEvent)
+│   ├── HTTPHelpers.swift          # Request building, auth, error mapping, codec
+│   ├── CoderOAuth.swift           # OAuth2 PKCE helpers + token exchange
+│   ├── CoderAPIError.swift        # Typed error enum
 │   └── Models/
-│       ├── ChatTypes.swift # All Coder SDK types
-│       └── AnyCodable.swift
-└── GmailAPI/               # Gmail REST API client library
-    ├── GmailClient.swift
-    ├── GmailOAuth.swift
-    ├── MessageParser.swift # MIME parsing, base64url decode
+│       ├── ChatTypes.swift        # Chat, CreateChatRequest, ChatStreamEvent, …
+│       └── AnyCodable.swift       # Type-erased JSON value
+└── GmailAPI/                      # SPM library — Gmail REST client
+    ├── GmailClient.swift          # Protocol (5 methods)
+    ├── HTTPGmailClient.swift      # URLSession impl; GmailTokenStore actor
+    ├── GmailOAuth.swift           # Google OAuth2 helpers + token refresh
+    ├── MessageParser.swift        # MIME tree walker, base64url decode
     └── Models/
-        └── GmailTypes.swift
+        └── GmailTypes.swift       # GmailMessage, GmailThread, GmailLabel, …
 ```
 
 ## Requirements

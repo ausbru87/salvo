@@ -15,38 +15,50 @@ Current options for AI-assisted email all suck in different ways:
 ## Core Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│              macOS Native App               │
-│  (SwiftUI + AppKit)                         │
-│                                             │
-│  ┌──────────────┐   ┌────────────────────┐  │
-│  │  Email View   │   │  AI Compose Pane  │  │
-│  │  (Gmail API)  │   │  (Coder Chats)    │  │
-│  │              │◄──►│                    │  │
-│  │  - Inbox     │   │  - Draft assist    │  │
-│  │  - Threads   │   │  - Subject lines   │  │
-│  │  - Labels    │   │  - Tone rewrite    │  │
-│  │  - Search    │   │  - Reply suggest   │  │
-│  └──────────────┘   └────────────────────┘  │
-│         │                     │              │
-└─────────┼─────────────────────┼──────────────┘
-          │                     │
-          ▼                     ▼
-   Gmail API (IMAP/REST)   Coder Chats API
-   (email CRUD only)       (AI inference only)
-                                │
-                                ▼
-                     ┌─────────────────────┐
-                     │  Your Coder Deploy  │
-                     │  ┌───────────────┐  │
-                     │  │ Claude / GPT / │  │
-                     │  │ any configured │  │
-                     │  │ model          │  │
-                     │  └───────────────┘  │
-                     └─────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Salvo (macOS native)                      │
+│                    SwiftUI + AppKit                          │
+│                                                              │
+│  ┌─────────────────────┐    ┌──────────────────────────────┐ │
+│  │     Email View      │    │       AI Compose Pane        │ │
+│  │  ContentView.swift  │    │     AIAssistPane.swift       │ │
+│  │                     │    │                              │ │
+│  │  • Inbox / Labels   │◄──►│  • Reply assist              │ │
+│  │  • Thread list      │    │  • Draft refinement          │ │
+│  │  • Thread detail    │    │  • Subject lines             │ │
+│  │  • Message render   │    │  • Tone rewrite              │ │
+│  └──────────┬──────────┘    └──────────────┬───────────────┘ │
+│             │         AppState (Observable) │               │
+│  ┌──────────▼──────────┐    ┌──────────────▼───────────────┐ │
+│  │    GmailAPI module  │    │       CoderAPI module        │ │
+│  │                     │    │                              │ │
+│  │  GmailClient        │    │  CoderClient (protocol)      │ │
+│  │  HTTPGmailClient ───┤    │  HTTPCoderClient ────────────┤ │
+│  │  GmailTokenStore    │    │  CoderStreamMessage          │ │
+│  │  GmailOAuth         │    │  HTTPHelpers                 │ │
+│  │  MessageParser      │    │  CoderOAuth                  │ │
+│  └──────────┬──────────┘    └──────────────┬───────────────┘ │
+└─────────────┼─────────────────────────────┼─────────────────┘
+              │                             │
+   HTTPS · OAuth2 Bearer          HTTPS · POST (create, message, tools)
+   401 → auto token refresh       WSS   · receive (stream events)
+   googleapis.com                 /api/experimental/chats/*
+              │                             │
+              ▼                             ▼
+   ┌─────────────────┐           ┌────────────────────────┐
+   │  Gmail REST API │           │   Coder Chats API      │
+   │  (email CRUD)   │           │   (AI inference only)  │
+   └─────────────────┘           └────────────┬───────────┘
+                                              │
+                                   ┌──────────▼──────────┐
+                                   │  Your Coder Deploy  │
+                                   │  Claude / GPT /     │
+                                   │  any configured     │
+                                   │  model              │
+                                   └─────────────────────┘
 ```
 
-**Key principle**: Gmail API handles email transport/storage. Coder Chats API handles all AI. They never cross. Your email content is sent to your Coder instance (which you control) — not to a third-party SaaS.
+**Key principle**: Gmail API handles email transport and storage. Coder Chats API handles all AI inference. They never cross. Email content reaches Coder only via explicit tool call results — not as a bulk upload.
 
 ---
 
@@ -108,35 +120,74 @@ The model calls `get_email_thread`, the app intercepts it, reads from Gmail API 
 ### Flow 1: Reply Assist (the core loop)
 
 ```
-User clicks "Reply" on an email
+User clicks "Reply"
     │
     ▼
-App opens split view: [Email Thread | AI Compose Pane]
+AIEmailService.startReplyAssist(instruction:thread:organizationID:)
+    │
+    ├─ POST /api/experimental/chats
+    │     body: { organization_id, system_prompt, dynamic_tools: [
+    │               get_email_thread, get_current_draft,
+    │               update_draft, set_subject, search_emails ] }
+    │     → Chat { id: UUID }
+    │
+    ├─ POST /api/experimental/chats/{id}/messages
+    │     body: { content: "decline politely" }
+    │
+    └─ WSS /api/experimental/chats/{id}/stream  ←─ open WebSocket
+           │
+           │  StreamMessage frames (JSON):
+           ├─ { type: "status_change", status: "streaming" }
+           ├─ { type: "message_part", part: { type: "tool_call",
+           │     tool_call_id: "tc_1", tool_name: "get_email_thread",
+           │     args: { thread_id: "abc123" } } }
+           │
+           └─ status_change: action_required
+                  │
+                  ▼
+         EmailToolExecutor.execute("get_email_thread", args)
+                  │
+                  ├─ GmailClient.getThread(id: "abc123", format: .full)
+                  │     GET googleapis.com/gmail/v1/users/me/threads/abc123
+                  │     → GmailThread (messages, headers, bodies)
+                  │
+                  └─ MessageParser.extractBody / extractSender (local)
+                         │
+                         ▼
+         POST /api/experimental/chats/{id}/tool-results
+               body: { tool_results: [{ tool_call_id: "tc_1",
+                         output: { thread_id, messages: [...] } }] }
+                         │
+                         ▼
+         WSS /api/experimental/chats/{id}/stream  ←─ new stream
+               │
+               ├─ { type: "message_part", part: { type: "text",
+               │     content: "Hi Sarah,\n\nThanks for…" } }   (×N tokens)
+               └─ { type: "status_change", status: "complete" }
+                         │
+                         ▼
+         AIEmailService.currentDraft ← accumulated text
+         AIAssistPane renders streamed draft in real time
+
+User types "make the second paragraph less formal"
     │
     ▼
-App calls CreateChat with:
-  - system_prompt: "You are an email assistant. Help draft replies..."
-  - content: [user's initial instruction, e.g. "decline politely"]
-  - unsafe_dynamic_tools: [get_email_thread, get_current_draft, update_draft, ...]
-  - labels: {"thread_id": "...", "flow": "reply"}
+AIEmailService.refineCurrentDraft(instruction:)
+    │
+    ├─ POST /api/experimental/chats/{id}/messages
+    │     body: { content: "make the second paragraph less formal" }
+    │
+    └─ WSS  →  model calls get_current_draft  →  submitToolResults
+           →  streams updated draft
+
+User satisfied → Send button
     │
     ▼
-Model calls get_email_thread tool → app fetches from Gmail → returns via SubmitToolResults
-    │
-    ▼
-Model streams draft into compose pane via StreamChat WebSocket
-    │
-    ▼
-User reads draft, types "make the second paragraph less formal"
-    │
-    ▼
-App calls CreateChatMessage with the refinement
-    │
-    ▼
-Model calls get_current_draft tool → gets latest text → streams updated version
-    │
-    ▼
-User is satisfied → hits Send (Gmail API directly)
+Gmail REST API  (send not yet wired — Phase 1 scope)
+
+Session ends:
+    └─ AIEmailService.finishSession()
+           └─ DELETE /api/experimental/chats/{id}
 ```
 
 ### Flow 2: Quick Subject Line
@@ -230,16 +281,18 @@ Email content is sent to Coder only when the user explicitly invokes an AI actio
 
 ### 4. macOS Tech Stack
 
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| **UI Framework** | SwiftUI + AppKit | Native macOS feel, split views, toolbars |
-| **Email Rendering** | WKWebView | HTML emails need a web view |
-| **Rich Text Editor** | NSTextView or custom | Compose pane with formatting |
-| **Networking** | URLSession + Starscream (WS) | Gmail REST + Coder WebSocket streaming |
-| **Local Storage** | SwiftData or Core Data | Email cache, account config |
-| **Auth (Gmail)** | ASWebAuthenticationSession | OAuth2 flow |
-| **Auth (Coder)** | Session token | `CODER_SESSION_TOKEN` or OAuth |
-| **Keychain** | Security.framework | Store tokens securely |
+| Component | Technology | Status |
+|-----------|-----------|--------|
+| **UI Framework** | SwiftUI + AppKit | ✅ Implemented |
+| **Email Rendering** | WKWebView | Planned (Phase 2) |
+| **Rich Text Editor** | NSTextView or custom | Planned (Phase 2) |
+| **Gmail HTTP** | `URLSession` (REST) | ✅ `HTTPGmailClient` |
+| **Coder HTTP** | `URLSession` | ✅ `HTTPCoderClient` |
+| **Coder WebSocket** | `URLSessionWebSocketTask` | ✅ `openStream()` in `HTTPCoderClient` |
+| **Gmail Auth** | `ASWebAuthenticationSession` + `GmailOAuth` | ✅ OAuth2 + token refresh |
+| **Coder Auth** | Session token or OAuth2 PKCE | ✅ `CoderOAuth` + `Coder-Session-Token` header |
+| **Token Storage** | `Security.framework` Keychain | ✅ `AccountManager` |
+| **Local Cache** | SwiftData or Core Data | Planned (Phase 2) |
 
 ### 5. Coder Authentication: OAuth2 Provider ✅
 
@@ -272,59 +325,98 @@ oauth2 experiment enabled. Store in Keychain either way.
 
 ---
 
-## Dynamic Tools Design (Detail)
+## Networking Layer
 
-This is the most architecturally interesting part. The LLM on the Coder backend doesn't have direct access to Gmail — the macOS app acts as the bridge.
+### CoderAPI module
 
-```swift
-// Pseudocode for how dynamic tools would work
-
-let tools: [DynamicTool] = [
-    DynamicTool(
-        name: "get_email_thread",
-        description: "Fetch the full email thread being replied to",
-        inputSchema: .object(properties: [
-            "thread_id": .string(description: "Gmail thread ID")
-        ])
-    ),
-    DynamicTool(
-        name: "get_current_draft",
-        description: "Read the current contents of the compose editor",
-        inputSchema: .object(properties: [:])
-    ),
-    DynamicTool(
-        name: "update_draft",
-        description: "Replace the compose editor contents with new text",
-        inputSchema: .object(properties: [
-            "body": .string(description: "New email body (HTML or plain text)"),
-            "format": .enum(["html", "plain"])
-        ])
-    ),
-    DynamicTool(
-        name: "set_subject",
-        description: "Set the email subject line",
-        inputSchema: .object(properties: [
-            "subject": .string(description: "The subject line")
-        ])
-    ),
-    DynamicTool(
-        name: "search_emails",
-        description: "Search the user's email for relevant context",
-        inputSchema: .object(properties: [
-            "query": .string(description: "Gmail search query"),
-            "max_results": .integer(description: "Max results to return", default: 5)
-        ])
-    )
-]
+```
+CoderClient (protocol)
+    │
+    └── HTTPCoderClient (struct)
+            │
+            ├── HTTPHelpers (extension)
+            │     ├── static encoder  JSONEncoder  .convertToSnakeCase
+            │     ├── static decoder  JSONDecoder  .convertFromSnakeCase + .iso8601
+            │     ├── applyAuth()     Coder-Session-Token  or  Authorization: Bearer
+            │     ├── makeRequest()   path + method + optional Encodable body
+            │     ├── execute()       URLSession.data() → validate status → Data
+            │     └── mapHTTPError()  401→unauthorized  403→forbidden  404→notFound
+            │                        409→conflict  429→usageLimitExceeded  5xx→serverError
+            │
+            ├── openStream(chatID:) → AsyncThrowingStream<ChatStreamEvent, Error>
+            │     │
+            │     ├── makeWebSocketURL()  https→wss  /  http→ws  (URLComponents swap)
+            │     ├── URLSessionWebSocketTask.resume()
+            │     └── recursive receive() callback loop
+            │               │
+            │               ▼
+            │         CoderStreamMessage (Decodable)
+            │               │  JSON frame { type, part | status | message }
+            │               ▼
+            │         ChatStreamEvent
+            │           .messagePart(ChatMessagePart)   text or tool_call chunks
+            │           .statusChange(ChatStatus)        streaming/idle/actionRequired/complete
+            │           .error(String)
+            │           .done                            → task.cancel + continuation.finish
+            │
+            └── Endpoints
+                  POST  /api/experimental/chats                        createChat
+                  POST  /api/experimental/chats/{id}/messages          streamChat (then WSS)
+                  POST  /api/experimental/chats/{id}/tool-results      submitToolResults (then WSS)
+                  DELETE /api/experimental/chats/{id}                  archiveChat
+                  GET   /api/experimental/chats/models?organization_id listModels
+                  WSS   /api/experimental/chats/{id}/stream            openStream
 ```
 
-When the model invokes a tool:
-1. `StreamChat` delivers an `action_required` event with the tool call
-2. The app intercepts it, executes locally (reads from Gmail API, reads from compose field, etc.)
-3. App calls `POST /chats/{id}/tool-results` with the result
-4. Model continues generating with the new context
+### GmailAPI module
 
-This means **the model only ever sees email data that passes through tool calls you control**. You can filter, redact, or truncate before returning results.
+```
+GmailClient (protocol)
+    │
+    └── HTTPGmailClient (struct)
+            │
+            ├── GmailTokenStore (actor)   ← serializes token mutation
+            │     var  accessToken  (refreshed on 401)
+            │     let  refreshToken
+            │     let  clientID
+            │
+            ├── makeRequest(path:queryItems:)
+            │     awaits tokenStore.accessToken → Authorization: Bearer
+            │
+            ├── execute(_:)
+            │     → 200–299: return Data
+            │     → 401:     GmailOAuth.refreshAccessToken() → retry once
+            │     → 404:     .notFound
+            │     → 429:     .rateLimited(retryAfter: Retry-After header)
+            │     → 5xx:     .serverError(statusCode:)
+            │
+            ├── static decoder  JSONDecoder  .convertFromSnakeCase
+            │
+            └── Endpoints
+                  GET  /profile                    getProfile
+                  GET  /messages?q=&maxResults=    listMessages
+                  GET  /messages/{id}?format=      getMessage
+                  GET  /threads/{id}?format=       getThread
+                  GET  /labels                     listLabels
+```
+
+---
+
+## Dynamic Tools Design (Detail)
+
+The LLM on Coder has no direct Gmail access — the macOS app is the bridge. Five tools are registered with every chat session and executed locally by `EmailToolExecutor`:
+
+| Tool | Args | Local execution | Output to model |
+|------|------|-----------------|-----------------|
+| `get_email_thread` | `thread_id: String` | `GmailClient.getThread(.full)` + `MessageParser` | Thread with messages: from, to, date, subject, body |
+| `get_current_draft` | _(none)_ | Read `AIEmailService.currentDraft` | `{ body, subject }` |
+| `update_draft` | `body: String` | Write `AIEmailService.currentDraft` | `{ status: "ok" }` |
+| `set_subject` | `subject: String` | Write `AIEmailService.currentSubject` | `{ status: "ok" }` |
+| `search_emails` | `query: String`, `max_results?: Int` | `GmailClient.listMessages()` + `getMessage(.minimal)` ×N | `{ results: [{ id, thread_id, snippet }] }` |
+
+When the model invokes a tool, the stream delivers `statusChange(.actionRequired)`. `AIEmailService` intercepts this, calls `EmailToolExecutor.execute()`, then calls `submitToolResults()` which opens a new WebSocket stream for the continuation. The model never sees raw Gmail data — only what the tool executor chooses to return.
+
+This means **you can filter, redact, or truncate** before returning results: strip signatures, redact phone numbers, omit quoted chains.
 
 ---
 
