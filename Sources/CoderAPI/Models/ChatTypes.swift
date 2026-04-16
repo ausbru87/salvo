@@ -15,12 +15,9 @@ public struct Chat: Codable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
-
-    enum CodingKeys: String, CodingKey {
-        case id, title
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-    }
+    // CodingKeys intentionally omitted: HTTPCoderClient.decoder uses
+    // .convertFromSnakeCase, which maps "created_at" → createdAt and
+    // "updated_at" → updatedAt automatically.
 }
 
 // MARK: - Create Chat Request
